@@ -11,7 +11,7 @@ require('dotenv').config();
 // Import utilities and middleware
 const { logger, morganMiddleware } = require('./utils/logger');
 const { generalLimiter } = require('./middleware/auth');
-const { redis } = require('./config/redis');
+const { redisPub, redisSub } = require('./config/redis');
 
 // Import socket handlers
 const { setupLocationSocket } = require('./sockets/locationSocket');
@@ -33,9 +33,11 @@ const io = socketIo(server, {
     methods: ["GET", "POST"],
     credentials: true
   },
-  // Redis adapter for scaling across multiple servers
-  adapter: require('@socket.io/redis-adapter')(redis, redis.duplicate())
 });
+
+// Configure Redis adapter
+const { createAdapter } = require('@socket.io/redis-adapter');
+io.adapter(createAdapter(redisPub, redisSub));
 
 // Security middleware
 app.use(helmet({
