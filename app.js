@@ -11,7 +11,7 @@ require('dotenv').config();
 // Import utilities and middleware
 const { logger, morganMiddleware } = require('./utils/logger');
 const { generalLimiter } = require('./middleware/auth');
-const { redisPub, redisSub } = require('./config/redis');
+const { redis, redisPub, redisSub, redisUtils } = require('./config/redis');
 
 // Import socket handlers
 const { setupLocationSocket } = require('./sockets/locationSocket');
@@ -115,6 +115,37 @@ app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/trips', tripRoutes);
 app.use('/api/routes', routeRoutes);
 app.use('/api/drivers', driverRoutes);
+// Realtime API (cached data)
+app.get('/api/realtime/vehicles/:id/location', async (req, res) => {
+  try {
+    const cached = await redisUtils.getCachedVehicleLocation(req.params.id);
+    if (!cached) return res.status(404).json({ error: 'No cached location for vehicle' });
+    res.json({ vehicleId: Number(req.params.id), location: cached });
+  } catch (error) {
+    logger.error('Realtime location fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch realtime location' });
+  }
+});
+
+app.get('/api/realtime/trips/:id/etas', async (req, res) => {
+  try {
+    // For simplicity, return last few cached ETAs by scanning stops 1..5
+    // In production, store an index of stops per trip/route in Redis for efficient listing
+    const active = await redisUtils.getActiveTripData(req.params.id);
+    if (!active) return res.status(404).json({ error: 'Trip not active' });
+    const { route_id: routeId, vehicle_id: vehicleId } = active;
+    const stopIds = (active.nextStopIds || []).slice(0, 10);
+    const etas = [];
+    for (const stopId of stopIds) {
+      const eta = await redisUtils.getCachedETA(routeId, stopId, vehicleId);
+      if (eta) etas.push({ stopId, ...eta });
+    }
+    res.json({ tripId: Number(req.params.id), etas });
+  } catch (error) {
+    logger.error('Realtime ETAs fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch ETAs' });
+  }
+});
 
 // Static files (for PWA)
 app.use(express.static('public'));
